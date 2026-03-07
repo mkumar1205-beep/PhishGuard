@@ -1,17 +1,19 @@
+import asyncio
+import sys
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import analyze, qr, report
+from app.routes.analyze import router as analyze_router
+from app.routes.qr import router as qr_router
 from app.database import init_db
 
-app = FastAPI(
-    title="PhishGuard AI",
-    description="AI-powered phishing detection for Indian users",
-    version="1.0.0"
-)
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+app = FastAPI(title="PhishGuard API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -21,10 +23,9 @@ app.add_middleware(
 async def startup():
     await init_db()
 
-app.include_router(analyze.router, prefix="/analyze", tags=["Analysis"])
-app.include_router(qr.router, prefix="/analyze/qr", tags=["QR"])
-app.include_router(report.router, prefix="/report", tags=["Reports"])
+app.include_router(analyze_router, prefix="/analyze")
+app.include_router(qr_router, prefix="/analyze")
 
-@app.get("/health")
-def health():
-    return {"status": "ok", "service": "PhishGuard AI"}
+@app.get("/")
+async def root():
+    return {"message": "PhishGuard API is running ✅"}

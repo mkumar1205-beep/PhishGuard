@@ -1,49 +1,30 @@
-from fastapi import APIRouter, UploadFile, File
-from pyzbar.pyzbar import decode
-from PIL import Image
-import io
-
-router = APIRouter()
-
-@router.post("/analyze/qr")
-async def analyze_qr(file: UploadFile = File(...)):
-    contents = await file.read()
-    image = Image.open(io.BytesIO(contents))
-    decoded = decode(image)
-
-    if not decoded:
-        return {"error": "No QR code found"}
-
-    qr_data = decoded[0].data.decode("utf-8")
-    is_upi = qr_data.startswith("upi://")
-
-    return {
-        "decoded": qr_data,
-        "is_upi": is_upi,
-        "verdict": "suspicious" if is_upi else "clean"
-    }
-import io
+import cv2
+import numpy as np
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from PIL import Image
 
 router = APIRouter()
 
-@router.post("/")
+@router.post("/qr")
 async def analyze_qr(file: UploadFile = File(...)):
     contents = await file.read()
 
-    try:
-        image = Image.open(io.BytesIO(contents))
-    except Exception:
+    nparr = np.frombuffer(contents, np.uint8)
+    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+    if image is None:
         raise HTTPException(status_code=400, detail="Invalid image file")
 
-    codes = qr_decode(image)
-    if not codes:
+    detector = cv2.QRCodeDetector()
+    retval, data, _, _ = detector.detectAndDecodeMulti(image)
+
+    if not retval or not data:
         raise HTTPException(status_code=422, detail="No QR code found in image")
 
     results = []
-    for code in codes:
-        decoded = code.data.decode("utf-8", errors="ignore").strip()
+    for decoded in data:
+        if not decoded:
+            continue
+        decoded = decoded.strip()
 
         if decoded.startswith("upi://"):
             result = await analyze_upi_qr(decoded)
@@ -62,6 +43,9 @@ async def analyze_qr(file: UploadFile = File(...)):
                 "risk": "unknown",
                 "note": "Not a URL or UPI string"
             })
+
+    if not results:
+        raise HTTPException(status_code=422, detail="No QR code found in image")
 
     return {"qr_results": results, "count": len(results)}
 

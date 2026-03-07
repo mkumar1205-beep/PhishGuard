@@ -17,6 +17,7 @@ export default function Home() {
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
 
   // Generate preview URL when file changes
   useEffect(() => {
@@ -52,87 +53,139 @@ export default function Home() {
     setIsDragging(false);
   }, []);
 
-  const handleFileAnalyze = async () => {
-    if (!selectedFile) return;
-    setIsLoading(true);
-    setResult(null);
+   const handleFileAnalyze = async () => {
+  if (!selectedFile) return;
+  setIsLoading(true);
+  setResult(null);
 
-    try {
-      const formData = new FormData();
-      formData.append("file", selectedFile);
+  try {
+    const formData = new FormData();
+    formData.append("file", selectedFile);
 
-      const response = await fetch('/api/analyze-file', {
-        method: 'POST',
-        body: formData,
-      });
+    const response = await fetch('http://localhost:8000/analyze/qr', {
+      method: 'POST',
+      body: formData,
+    });
 
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        throw new Error('Python backend is not running. Start it on port 8000.');
-      }
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Analysis failed (${response.status})`);
-      }
-
-      const data = await response.json();
-      console.log("PhishGuard File Analysis Response:", data);
-      setResult(data);
-    } catch (error: any) {
-      console.error("PhishGuard File Error:", error);
-      setResult({
-        score: 0,
-        verdict_en: `Error: ${error.message || "Could not reach the analysis server. Make sure the Python backend is running."}`,
-        verdict_hi: `त्रुटि: ${error.message || "विश्लेषण सर्वर तक नहीं पहुँच सका। कृपया Python बैकएंड चालू करें।"}`,
-        tactics: []
-      });
-    } finally {
-      setIsLoading(false);
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error('Python backend is not running. Start it on port 8000.');
     }
-  };
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || `Analysis failed (${response.status})`);
+    }
+
+    const data = await response.json();
+    console.log("PhishGuard QR Response:", data);
+
+    const qrResult = data.qr_results?.[0];
+
+    if (!qrResult) {
+      throw new Error("No QR code found in image.");
+    }
+
+    // If QR contains a URL → forward to analyze endpoint for full analysis
+    if (qrResult.type === "url" && qrResult.url_for_analysis) {
+      const analyzeResponse = await fetch('http://localhost:8000/analyze/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: qrResult.url_for_analysis }),
+      });
+
+      if (!analyzeResponse.ok) {
+        const err = await analyzeResponse.json().catch(() => ({}));
+        throw new Error(err.detail || `URL analysis failed (${analyzeResponse.status})`);
+      }
+
+      const urlData = await analyzeResponse.json();
+      setResult({
+        ...urlData,
+        tactics: urlData.tactics ?? [],
+      });
+      return;
+    }
+
+    // For UPI QR codes → normalize to result card format
+    if (qrResult.type === "upi") {
+      setResult({
+        score: qrResult.score ?? (
+          qrResult.risk_level === "dangerous" ? 80 :
+          qrResult.risk_level === "suspicious" ? 50 : 10
+        ),
+        verdict_en: qrResult.flags?.length
+          ? `UPI QR: ${qrResult.flags.join(". ")}`
+          : `UPI payment to ${qrResult.payee_name || qrResult.payee_vpa} — no threats detected.`,
+        verdict_hi: `UPI विश्लेषण: ${qrResult.payee_name || qrResult.payee_vpa} — ${qrResult.risk_level === "safe" ? "कोई खतरा नहीं" : "संदिग्ध गतिविधि"}`,
+        tactics: qrResult.flags ?? [],
+      });
+      return;
+    }
+
+    // Fallback for plain text QR codes
+    setResult({
+      score: 0,
+      verdict_en: `QR decoded (text): ${qrResult.decoded}`,
+      verdict_hi: `QR विश्लेषण: ${qrResult.decoded}`,
+      tactics: [],
+    });
+
+  } catch (error: any) {
+    console.error("PhishGuard File Error:", error);
+    setResult({
+      score: 0,
+      verdict_en: `Error: ${error.message || "Could not reach the analysis server."}`,
+      verdict_hi: `त्रुटि: ${error.message || "विश्लेषण सर्वर तक नहीं पहुँच सका।"}`,
+      tactics: [],
+    });
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const handleAnalyze = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!url) return;
+  e.preventDefault();
+  if (!url) return;
 
-    setIsLoading(true);
-    setResult(null);
+  setIsLoading(true);
+  setResult(null);
+  
 
-    try {
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ url })
-      });
+  try {
+    const response = await fetch('http://localhost:8000/analyze/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
 
-      const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        throw new Error('Python backend is not running. Start it on port 8000.');
-      }
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Analysis failed (${response.status})`);
-      }
-
-      const data = await response.json();
-      console.log("PhishGuard API Response:", data);
-      setResult(data);
-    } catch (error: any) {
-      console.error("PhishGuard Error:", error);
-      setResult({
-        score: 0,
-        verdict_en: `Error: ${error.message || "Could not reach the analysis server. Make sure the Python backend is running."}`,
-        verdict_hi: `त्रुटि: ${error.message || "विश्लेषण सर्वर तक नहीं पहुँच सका। कृपया Python बैकएंड चालू करें।"}`,
-        tactics: []
-      });
-    } finally {
-      setIsLoading(false);
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error('Python backend is not running. Start it on port 8000.');
     }
-  };
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.detail || `Analysis failed (${response.status})`);
+    }
+
+    const data = await response.json();
+    console.log("PhishGuard API Response:", data);
+    setResult(data);
+
+
+  } catch (error: any) {
+    console.error("PhishGuard Error:", error);
+    setResult({
+      score: 0,
+      verdict_en: `Error: ${error.message || "Could not reach the analysis server."}`,
+      verdict_hi: `त्रुटि: ${error.message || "विश्लेषण सर्वर तक नहीं पहुँच सका।"}`,
+      tactics: []
+    });
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const getScoreColor = (score: number) => {
     if (score >= 70) return "text-red-500";
@@ -425,7 +478,7 @@ export default function Home() {
                         Detected Tactics
                       </p>
                       <div className="flex flex-wrap gap-2.5">
-                        {result.tactics.map((tactic: string, i: number) => (
+                       {(result.tactics ?? []).map((tactic: string, i: number) => (
                           <Badge
                             key={i}
                             variant="outline"
@@ -444,6 +497,7 @@ export default function Home() {
 
                   </div>
                 </div>
+                
               </CardContent>
             </Card>
           </motion.div>

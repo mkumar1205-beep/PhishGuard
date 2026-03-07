@@ -1,6 +1,6 @@
 import asyncio
 import base64
-from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
+from concurrent.futures import ThreadPoolExecutor
 from app.models.schemas import SignalResult
 
 SUSPICIOUS_DOM_SIGNALS = [
@@ -11,7 +11,9 @@ SUSPICIOUS_DOM_SIGNALS = [
     "input[placeholder*='password']",
 ]
 
-async def analyze_visual(url: str) -> SignalResult:
+def _run_playwright(url: str) -> dict:
+    from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+
     score = 0
     flags = []
     raw = {}
@@ -20,8 +22,8 @@ async def analyze_visual(url: str) -> SignalResult:
         url = "https://" + url
 
     try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
                 headless=True,
                 args=[
                     "--no-sandbox",
@@ -30,17 +32,17 @@ async def analyze_visual(url: str) -> SignalResult:
                     "--disable-gpu",
                 ]
             )
-            context = await browser.new_context(
+            context = browser.new_context(
                 viewport={"width": 1280, "height": 800},
                 java_script_enabled=True,
                 extra_http_headers={"DNT": "1"},
                 user_agent="Mozilla/5.0 (compatible; PhishGuardBot/1.0)"
             )
-            page = await context.new_page()
+            page = context.new_page()
 
-            # 1. Navigate with timeout
+            # 1. Navigate
             try:
-                response = await page.goto(url, timeout=8000, wait_until="domcontentloaded")
+                response = page.goto(url, timeout=60000, wait_until="domcontentloaded")
                 raw["http_status"] = response.status if response else None
                 raw["final_url"] = page.url
 
@@ -54,17 +56,17 @@ async def analyze_visual(url: str) -> SignalResult:
                 score += 10
                 flags.append("Page timed out — suspicious")
                 raw["timeout"] = True
-                await browser.close()
-                return SignalResult(score=min(score, 25), flags=flags, confidence=0.6, raw_data=raw)
+                browser.close()
+                return {"score": min(score, 25), "flags": flags, "confidence": 0.6, "raw": raw}
 
             # 2. Screenshot
-            screenshot_bytes = await page.screenshot(full_page=True, type="png")
+            screenshot_bytes = page.screenshot(full_page=True, type="png")
             raw["screenshot_b64"] = base64.b64encode(screenshot_bytes).decode("utf-8")
 
             # 3. DOM signals
             dom_signals = {}
             for selector in SUSPICIOUS_DOM_SIGNALS:
-                count = await page.locator(selector).count()
+                count = page.locator(selector).count()
                 if count > 0:
                     dom_signals[selector] = count
 
@@ -74,7 +76,7 @@ async def analyze_visual(url: str) -> SignalResult:
                 raw["dom_signals"] = dom_signals
 
             # 4. Page title urgency
-            title = await page.title()
+            title = page.title()
             raw["page_title"] = title
             urgency_words = ["urgent", "verify", "suspended", "blocked", "expires", "warning"]
             if any(w in title.lower() for w in urgency_words):
@@ -82,21 +84,29 @@ async def analyze_visual(url: str) -> SignalResult:
                 flags.append(f"Urgency in page title: '{title}'")
 
             # 5. iFrame count
-            iframe_count = await page.locator("iframe").count()
+            iframe_count = page.locator("iframe").count()
             if iframe_count > 2:
                 score += 5
                 flags.append(f"Suspicious iframes: {iframe_count}")
                 raw["iframe_count"] = iframe_count
 
-            await browser.close()
+            browser.close()
 
     except Exception as e:
         flags.append(f"Sandbox error: {str(e)}")
         raw["error"] = str(e)
 
+    return {"score": score, "flags": flags, "confidence": 0.8 if raw.get("screenshot_b64") else 0.3, "raw": raw}
+
+
+async def analyze_visual(url: str) -> SignalResult:
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor() as pool:
+        result = await loop.run_in_executor(pool, _run_playwright, url)
+
     return SignalResult(
-        score=min(score, 30),
-        flags=flags,
-        confidence=0.8 if raw.get("screenshot_b64") else 0.3,
-        raw_data=raw
+        score=min(result["score"], 30),
+        flags=result["flags"],
+        confidence=result["confidence"],
+        raw_data=result["raw"]
     )
