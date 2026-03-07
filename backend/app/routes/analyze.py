@@ -1,23 +1,34 @@
 import asyncio
 import hashlib
+import base64
 import tldextract
+from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor
+
 from fastapi import APIRouter, HTTPException
+
 from app.models.schemas import (
     AnalyzeRequest, AnalyzeResponse, RiskLevel,
     MitmSummary, BlockedRequest,
 )
+
 from app.services.domain_service import analyze_domain
 from app.services.nlp_service import analyze_nlp
 from app.services.sandbox_service import analyze_visual
 from app.services.llm_service import generate_verdict, generate_scam_arc, generate_annotations
-from app.database import get_cached_result, set_cached_result, add_to_threat_feed, get_threat_feed
-from urllib.parse import urlparse
+
+from app.database import (
+    get_cached_result,
+    set_cached_result,
+    add_to_threat_feed,
+    get_threat_feed,
+)
+
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
-from concurrent.futures import ThreadPoolExecutor
-import base64
+
 
 router = APIRouter()
 
@@ -31,6 +42,10 @@ def score_to_risk(score: int) -> RiskLevel:
 
 
 def _build_mitm_summary(raw_data: dict) -> MitmSummary | None:
+    """
+    Extract MITM proxy traffic summary from sandbox results.
+    """
+
     mitm = raw_data.get("mitm")
     if not mitm:
         return None
@@ -46,7 +61,8 @@ def _build_mitm_summary(raw_data: dict) -> MitmSummary | None:
     })
 
     blocked = [
-        BlockedRequest(**b) for b in mitm.get("blocked_requests", [])
+        BlockedRequest(**b)
+        for b in mitm.get("blocked_requests", [])
         if all(k in b for k in ["timestamp", "url", "host", "method", "reason"])
     ]
 
@@ -62,14 +78,15 @@ def _build_mitm_summary(raw_data: dict) -> MitmSummary | None:
 @router.post("/", response_model=AnalyzeResponse)
 async def analyze(req: AnalyzeRequest):
 
-    # 1. Cache check
+    # 1. Cache
     cache_key = hashlib.md5(req.url.encode()).hexdigest()
     cached = await get_cached_result(cache_key)
+
     if cached:
         cached["cached"] = True
         return AnalyzeResponse(**cached)
 
-    # 2. Run domain + nlp + sandbox in parallel
+    # 2. Run analyzers
     try:
         domain_result, nlp_result, visual_result = await asyncio.gather(
             analyze_domain(req.url),
@@ -94,15 +111,15 @@ async def analyze(req: AnalyzeRequest):
         visual_result.raw_data.get("screenshot_b64")
     )
 
-    # 6. Build mitmproxy summary
+    # 6. MITM summary
     mitm_summary = _build_mitm_summary(visual_result.raw_data)
 
-    # 7. If mitm terminated early, bump score
     final_score = verdict_data.get("score", composite_score)
+
     if mitm_summary and mitm_summary.terminated_early:
         final_score = min(final_score + 20, 100)
 
-    # 8. Build response
+    # 7. Build response
     response = AnalyzeResponse(
         score=final_score,
         risk_level=score_to_risk(final_score),
@@ -118,14 +135,20 @@ async def analyze(req: AnalyzeRequest):
         mitm_summary=mitm_summary,
     )
 
-    # 9. Add to threat feed if high risk
+    # 8. Add to threat feed if risky
     if final_score >= 40:
         extracted = tldextract.extract(req.url)
         domain = f"{extracted.domain}.{extracted.suffix}"
-        await add_to_threat_feed(domain, final_score, verdict_data.get("tactics", []))
 
-    # 10. Cache
+        await add_to_threat_feed(
+            domain,
+            final_score,
+            verdict_data.get("tactics", [])
+        )
+
+    # 9. Cache
     await set_cached_result(cache_key, response.dict())
+
     return response
 
 
@@ -136,6 +159,7 @@ async def threat_feed():
 
 
 def _take_screenshot_sync(url: str) -> str | None:
+
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
@@ -146,22 +170,30 @@ def _take_screenshot_sync(url: str) -> str | None:
         service=Service(ChromeDriverManager().install()),
         options=options
     )
+
     try:
         driver.get(url)
         screenshot = driver.get_screenshot_as_png()
         return base64.b64encode(screenshot).decode("utf-8")
+
     finally:
         driver.quit()
 
 
 @router.get("/screenshot")
 async def take_screenshot(url: str):
+
     try:
         loop = asyncio.get_event_loop()
+
         with ThreadPoolExecutor() as pool:
-            b64 = await loop.run_in_executor(pool, _take_screenshot_sync, url)
-        print(f"✅ Screenshot taken, size: {len(b64)} chars")
+            b64 = await loop.run_in_executor(
+                pool,
+                _take_screenshot_sync,
+                url
+            )
+
         return {"screenshot": f"data:image/png;base64,{b64}"}
+
     except Exception as e:
-        print(f"❌ Screenshot error: {e}")
         return {"screenshot": None, "error": str(e)}
