@@ -118,6 +118,7 @@ async def analyze(req: AnalyzeRequest):
             annotations=None,
             scam_arc=None,
             mitm_summary=None,
+            redirect_chain=redirect_data,
         )
         await set_cached_result(cache_key, safe_response.dict())
         return safe_response
