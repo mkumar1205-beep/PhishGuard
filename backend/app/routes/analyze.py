@@ -1,21 +1,37 @@
 import asyncio
 import hashlib
+import base64
 import tldextract
+from urllib.parse import urlparse
+from concurrent.futures import ThreadPoolExecutor
+
 from fastapi import APIRouter, HTTPException
-from app.models.schemas import AnalyzeRequest, AnalyzeResponse, RiskLevel
+
+from app.models.schemas import (
+    AnalyzeRequest, AnalyzeResponse, RiskLevel,
+    MitmSummary, BlockedRequest,
+)
+
 from app.services.domain_service import analyze_domain
 from app.services.nlp_service import analyze_nlp
 from app.services.sandbox_service import analyze_visual
 from app.services.llm_service import generate_verdict, generate_scam_arc, generate_annotations
-from app.database import get_cached_result, set_cached_result, add_to_threat_feed, get_threat_feed
+
+from app.database import (
+    get_cached_result,
+    set_cached_result,
+    add_to_threat_feed,
+    get_threat_feed,
+)
+
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
-from concurrent.futures import ThreadPoolExecutor
-import base64
+
 
 router = APIRouter()
+
 
 def score_to_risk(score: int) -> RiskLevel:
     if score >= 70:
@@ -24,17 +40,53 @@ def score_to_risk(score: int) -> RiskLevel:
         return RiskLevel.SUSPICIOUS
     return RiskLevel.SAFE
 
+
+def _build_mitm_summary(raw_data: dict) -> MitmSummary | None:
+    """
+    Extract MITM proxy traffic summary from sandbox results.
+    """
+
+    mitm = raw_data.get("mitm")
+    if not mitm:
+        return None
+
+    tlog = mitm.get("traffic_log", [])
+    page_domain = urlparse(raw_data.get("final_url", "")).netloc
+
+    external_post_domains = list({
+        e["host"] for e in tlog
+        if e.get("method") == "POST"
+        and e.get("host")
+        and e["host"] != page_domain
+    })
+
+    blocked = [
+        BlockedRequest(**b)
+        for b in mitm.get("blocked_requests", [])
+        if all(k in b for k in ["timestamp", "url", "host", "method", "reason"])
+    ]
+
+    return MitmSummary(
+        terminated_early=mitm.get("terminated_early", False),
+        termination_reason=mitm.get("termination_reason", ""),
+        blocked_requests=blocked,
+        total_requests_captured=len(tlog),
+        external_post_domains=external_post_domains,
+    )
+
+
 @router.post("/", response_model=AnalyzeResponse)
 async def analyze(req: AnalyzeRequest):
 
-    # 1. Check cache first
+    # 1. Cache
     cache_key = hashlib.md5(req.url.encode()).hexdigest()
     cached = await get_cached_result(cache_key)
+
     if cached:
         cached["cached"] = True
         return AnalyzeResponse(**cached)
 
-    # 2. Run 3 tasks in parallel
+    # 2. Run analyzers
     try:
         domain_result, nlp_result, visual_result = await asyncio.gather(
             analyze_domain(req.url),
@@ -54,13 +106,20 @@ async def analyze(req: AnalyzeRequest):
         generate_scam_arc(req.url, composite_score),
     )
 
-    # 5. Annotations from screenshot
+    # 5. Screenshot annotations
     annotations = await generate_annotations(
         visual_result.raw_data.get("screenshot_b64")
     )
 
-    # 6. Build response
+    # 6. MITM summary
+    mitm_summary = _build_mitm_summary(visual_result.raw_data)
+
     final_score = verdict_data.get("score", composite_score)
+
+    if mitm_summary and mitm_summary.terminated_early:
+        final_score = min(final_score + 20, 100)
+
+    # 7. Build response
     response = AnalyzeResponse(
         score=final_score,
         risk_level=score_to_risk(final_score),
@@ -73,16 +132,23 @@ async def analyze(req: AnalyzeRequest):
         screenshot_b64=visual_result.raw_data.get("screenshot_b64"),
         annotations=annotations,
         scam_arc=scam_arc,
+        mitm_summary=mitm_summary,
     )
 
-    # 7. Add to threat feed if high risk
+    # 8. Add to threat feed if risky
     if final_score >= 40:
         extracted = tldextract.extract(req.url)
         domain = f"{extracted.domain}.{extracted.suffix}"
-        await add_to_threat_feed(domain, final_score, verdict_data.get("tactics", []))
 
-    # 8. Cache it
+        await add_to_threat_feed(
+            domain,
+            final_score,
+            verdict_data.get("tactics", [])
+        )
+
+    # 9. Cache
     await set_cached_result(cache_key, response.dict())
+
     return response
 
 
@@ -93,6 +159,7 @@ async def threat_feed():
 
 
 def _take_screenshot_sync(url: str) -> str | None:
+
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
@@ -103,23 +170,30 @@ def _take_screenshot_sync(url: str) -> str | None:
         service=Service(ChromeDriverManager().install()),
         options=options
     )
+
     try:
         driver.get(url)
         screenshot = driver.get_screenshot_as_png()
         return base64.b64encode(screenshot).decode("utf-8")
+
     finally:
         driver.quit()
 
 
 @router.get("/screenshot")
 async def take_screenshot(url: str):
+
     try:
         loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor() as pool:
-            b64 = await loop.run_in_executor(pool, _take_screenshot_sync, url)
 
-        print(f"✅ Screenshot taken, size: {len(b64)} chars")
+        with ThreadPoolExecutor() as pool:
+            b64 = await loop.run_in_executor(
+                pool,
+                _take_screenshot_sync,
+                url
+            )
+
         return {"screenshot": f"data:image/png;base64,{b64}"}
+
     except Exception as e:
-        print(f"❌ Screenshot error: {e}")
         return {"screenshot": None, "error": str(e)}

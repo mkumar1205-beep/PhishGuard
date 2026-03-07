@@ -38,11 +38,11 @@ services:
       - backend
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      test: ["CMD", "curl", "-sf", "http://localhost/"]
       interval: 30s
       timeout: 5s
       retries: 3
-
+      
   # ── FastAPI Backend ────────────────────────────────────────────────────────
   backend:
     build:
