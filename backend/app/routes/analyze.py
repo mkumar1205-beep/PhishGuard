@@ -258,3 +258,61 @@ async def take_screenshot(url: str):
 
     except Exception as e:
         return {"screenshot": None, "error": str(e)}
+
+from app.models.schemas import URLRequest  # add to existing imports (or define inline below)
+
+@router.post("/check-url")
+async def check_url_for_extension(req: URLRequest):
+    """
+    Thin wrapper for the Chrome extension.
+    Calls the main analyze() logic and returns extension-friendly shape.
+    """
+    # Reuse your existing analyze logic
+    analyze_req = AnalyzeRequest(url=req.url, message=None)
+    result = await analyze(analyze_req)
+
+    return {
+        "is_malicious": result.risk_level in (RiskLevel.DANGEROUS, RiskLevel.SUSPICIOUS),
+        "reason": result.verdict_en,
+        "score": round(result.score / 100, 2),   # normalize 0–100 → 0.0–1.0
+        "categories": result.tactics,
+    }
+
+@router.post("/quick-check")
+async def quick_check(req: URLRequest):
+    """
+    Fast check for extension hover — skips Selenium sandbox.
+    Only runs domain + NLP analysis (responds in ~2-3 seconds).
+    """
+    cache_key = hashlib.md5(req.url.encode()).hexdigest()
+    cached = await get_cached_result(cache_key)
+    
+    if cached:
+        result = AnalyzeResponse(**cached)
+        return {
+            "is_malicious": result.risk_level in (RiskLevel.DANGEROUS, RiskLevel.SUSPICIOUS),
+            "reason": result.verdict_en,
+            "score": round(result.score / 100, 2),
+            "categories": result.tactics,
+            "cached": True,
+        }
+
+    # Only run fast analyzers — NO sandbox/Selenium
+    try:
+        domain_result, nlp_result = await asyncio.gather(
+            analyze_domain(req.url),
+            analyze_nlp(""),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    raw_score = domain_result.score + nlp_result.score
+    composite_score = min(raw_score, 100)
+
+    return {
+        "is_malicious": composite_score >= 40,
+        "reason": f"Domain + NLP signals. Score: {composite_score}/100. Flags: {', '.join(domain_result.flags[:3]) or 'none'}",
+        "score": round(composite_score / 100, 2),
+        "categories": domain_result.flags[:3],
+        "cached": False,
+    }
