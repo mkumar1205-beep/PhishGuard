@@ -1,0 +1,105 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  NETWORK TOPOLOGY
+#
+#  internet ──▶ nginx:80 ──▶ backend:8000 ──▶ sandbox:8001 ──▶ internet
+#                                   │
+#                                   └──▶ redis:6379
+#
+#  public_net    (nginx only — has internet access for port binding)
+#  internal_net  (internal: true — backend, redis, nginx)
+#  sandbox_net   (backend, sandbox — sandbox has internet)
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  public_net:
+    driver: bridge
+
+  internal_net:
+    driver: bridge
+    internal: true
+
+  sandbox_net:
+    driver: bridge
+
+
+services:
+
+  # ── Nginx ─────────────────────────────────────────────────────────────────
+  nginx:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    networks:
+      - public_net      # accepts traffic from host/internet
+      - internal_net    # reaches backend
+    depends_on:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      
+  # ── FastAPI Backend ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      GROQ_API_KEY:        ${GROQ_API_KEY}
+      VIRUSTOTAL_API_KEY:  ${VIRUSTOTAL_API_KEY:-}
+      REDIS_URL:           redis://redis:6379
+      SANDBOX_URL:         http://sandbox:8001
+    networks:
+      - internal_net    # reaches: nginx, redis
+      - sandbox_net     # reaches: sandbox
+    depends_on:
+      redis:
+        condition: service_healthy
+      sandbox:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Sandbox ────────────────────────────────────────────────────────────────
+  sandbox:
+    build:
+      context: ./sandbox
+      dockerfile: Dockerfile
+    networks:
+      - sandbox_net
+    environment:
+      PYTHONUNBUFFERED: "1"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8001/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1500M
+        reservations:
+          memory: 512M
+
+volumes:
+  redis_data:

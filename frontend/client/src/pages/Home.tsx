@@ -62,8 +62,8 @@ export default function Home() {
     const formData = new FormData();
     formData.append("file", selectedFile);
 
-    const response = await fetch('http://localhost:8000/analyze/qr', {
-      method: 'POST',
+    const response = await fetch("/analyze/", {
+      method: "POST",
       body: formData,
     });
 
@@ -88,9 +88,9 @@ export default function Home() {
 
     // If QR contains a URL → forward to analyze endpoint for full analysis
     if (qrResult.type === "url" && qrResult.url_for_analysis) {
-      const analyzeResponse = await fetch('http://localhost:8000/analyze/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const analyzeResponse = await fetch("/analyze/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: qrResult.url_for_analysis }),
       });
 
@@ -153,10 +153,10 @@ export default function Home() {
   
 
   try {
-    const response = await fetch('http://localhost:8000/analyze/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
+    const response = await fetch("/analyze/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
     });
 
     const contentType = response.headers.get('content-type') || '';

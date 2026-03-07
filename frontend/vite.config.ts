@@ -4,10 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
 export default defineConfig({
-  plugins: [
-    react(),
-    tailwindcss(),
-  ],
+  plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "client", "src"),
@@ -24,13 +21,13 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    port: 5173,
     host: "0.0.0.0",
     allowedHosts: true,
     proxy: {
-      "/api": {
+      "/analyze": {
         target: "http://localhost:8000",
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ""),
       },
     },
     fs: {

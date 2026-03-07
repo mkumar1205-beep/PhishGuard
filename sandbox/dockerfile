@@ -1,0 +1,40 @@
+# ── Sandbox container ──────────────────────────────────────────────────────
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y \
+    wget curl ca-certificates fonts-liberation fonts-noto fonts-noto-cjk \
+    libasound2 libatk-bridge2.0-0 libatk1.0-0 libcups2 libdbus-1-3 \
+    libdrm2 libgbm1 libgtk-3-0 libnspr4 libnss3 libx11-xcb1 \
+    libxcomposite1 libxdamage1 libxfixes3 libxrandr2 xdg-utils \
+    --no-install-recommends && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /sandbox
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+RUN playwright install chromium
+
+# Copy all source files (including the cert generation helper)
+COPY gen_cert.py .
+COPY app.py .
+COPY mitm_addon.py .
+
+# Generate the mitmproxy CA cert using the helper script
+RUN python gen_cert.py
+
+# Install cert into system trust store
+RUN cp /root/.mitmproxy/mitmproxy-ca-cert.pem \
+       /usr/local/share/ca-certificates/mitmproxy.crt && \
+    update-ca-certificates
+
+# Non-root user
+RUN useradd -m -u 1001 sandbox && \
+    mkdir -p /home/sandbox/.mitmproxy && \
+    cp /root/.mitmproxy/mitmproxy-ca* /home/sandbox/.mitmproxy/ && \
+    chown -R sandbox:sandbox /home/sandbox/.mitmproxy /sandbox
+
+USER sandbox
+
+EXPOSE 8001
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "1"]
