@@ -7,6 +7,8 @@ from app.services.nlp_service import analyze_nlp
 from app.services.sandbox_service import analyze_visual
 from app.services.llm_service import generate_verdict, generate_scam_arc, generate_annotations
 from app.database import get_cached_result, set_cached_result
+from playwright.async_api import async_playwright
+import base64
 
 router = APIRouter()
 
@@ -71,3 +73,4 @@ async def analyze(req: AnalyzeRequest):
     # 7. Cache it
     await set_cached_result(cache_key, response.dict())
     return response
+

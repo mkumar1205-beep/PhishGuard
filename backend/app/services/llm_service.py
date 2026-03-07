@@ -94,11 +94,15 @@ Return only the JSON object."""
 
     try:
         text = await _call_groq([{"role": "user", "content": user_content}])
+        print(f"[LLM] Raw response: {text}")
         parsed = _safe_parse_json(text)
+        print(f"[LLM] Parsed: {parsed}")
         if parsed:
             return parsed
     except Exception as e:
+        import traceback
         print(f"[LLM] generate_verdict error: {e}")
+        traceback.print_exc()
 
     raw_score = domain.score + nlp.score + visual.score
     return {

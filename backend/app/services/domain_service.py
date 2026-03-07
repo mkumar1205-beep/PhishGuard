@@ -56,13 +56,18 @@ async def analyze_domain(url: str) -> SignalResult:
                 elif age_days < 90:
                     score += 10
                     flags.append(f"Recent domain ({age_days} days old)")
+            else:
+                score += 15
+                flags.append("Domain age unknown — WHOIS lookup failed")
         except Exception as e:
+            score += 15
+            flags.append("Domain age unknown — WHOIS lookup failed")
             raw["whois_error"] = str(e)
 
         # 2. Suspicious TLD
         tld = "." + domain.split(".")[-1]
         if tld in SUSPICIOUS_TLDS:
-            score += 15
+            score += 25
             flags.append(f"Suspicious TLD: {tld}")
         raw["tld"] = tld
 
@@ -70,16 +75,18 @@ async def analyze_domain(url: str) -> SignalResult:
         for legit_domain, brand_name in BRAND_DOMAINS.items():
             dist = Levenshtein.distance(domain, legit_domain)
             if 0 < dist <= 3:
-                score += 25
+                score += 35
                 flags.append(f"Possible {brand_name} impersonation (distance={dist} from {legit_domain})")
                 raw["impersonating"] = brand_name
                 break
 
-        # 4. Brand name in subdomain abuse
-        for brand_domain in BRAND_DOMAINS:
-            if brand_domain in domain and not domain.endswith(brand_domain):
-                score += 20
-                flags.append(f"Brand name used in subdomain: {domain}")
+        # 4. Brand keyword in domain
+        for brand_domain, brand_name in BRAND_DOMAINS.items():
+            brand_keyword = brand_domain.split(".")[0]
+            if brand_keyword in domain and not domain.endswith(brand_domain):
+                score += 30
+                flags.append(f"Brand keyword '{brand_keyword}' found in suspicious domain — possible {brand_name} impersonation")
+                raw["impersonating"] = brand_name
                 break
 
         # 5. VirusTotal

@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+import os
 
 class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
@@ -9,6 +10,6 @@ class Settings(BaseSettings):
     CACHE_TTL_SECONDS: int = 86400
 
     class Config:
-        env_file = ".env"
+        env_file = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
 
 settings = Settings()
