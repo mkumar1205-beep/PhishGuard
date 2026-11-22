@@ -26,6 +26,10 @@ export default function Home() {
   const [showLiveView, setShowLiveView] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    console.log("[PhishGuard] Active API Base URL:", API_BASE_URL || "(empty / relative)");
+  }, []);
+
   const toggleSection = (key: string) =>
     setExpandedSections(prev => ({ ...prev, [key]: !prev[key] }));
 
@@ -88,7 +92,15 @@ export default function Home() {
 
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
-        throw new Error('Python backend is not running. Start it on port 8000.');
+        const target = API_BASE_URL || window.location.origin;
+        if (!API_BASE_URL) {
+          throw new Error(
+            `VITE_API_URL is not baked into this build. The request hit ${target} instead of your backend. Did you redeploy in Vercel after adding VITE_API_URL?`
+          );
+        }
+        throw new Error(
+          `Backend at ${API_BASE_URL} returned HTTP ${response.status} (${contentType || 'non-JSON'}). Check backend logs.`
+        );
       }
 
       if (!response.ok) {
@@ -179,7 +191,15 @@ export default function Home() {
 
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
-        throw new Error('Python backend is not running. Start it on port 8000.');
+        const target = API_BASE_URL || window.location.origin;
+        if (!API_BASE_URL) {
+          throw new Error(
+            `VITE_API_URL is not baked into this build. The request hit ${target} instead of your backend. Did you redeploy in Vercel after adding VITE_API_URL?`
+          );
+        }
+        throw new Error(
+          `Backend at ${API_BASE_URL} returned HTTP ${response.status} (${contentType || 'non-JSON'}). Check backend logs.`
+        );
       }
 
       if (!response.ok) {

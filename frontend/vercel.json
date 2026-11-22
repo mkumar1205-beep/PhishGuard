@@ -1,6 +1,14 @@
 {
   "rewrites": [
     {
+      "source": "/analyze/:path*",
+      "destination": "https://phishguard-hqku.onrender.com/analyze/:path*"
+    },
+    {
+      "source": "/sandbox/:path*",
+      "destination": "https://phishguard-hqku.onrender.com/sandbox/:path*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
