@@ -23,7 +23,7 @@ export default function ThreatFeed() {
   const fetchFeed = async (silent = false) => {
     if (!silent) setIsLoading(true);
     try {
-      const res = await fetch("http://localhost:8000/analyze/threat-feed");
+      const res = await fetch("/analyze/threat-feed");
       const data = await res.json();
       const incoming: ThreatEntry[] = data.feed ?? [];
 
