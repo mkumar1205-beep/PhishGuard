@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { API_BASE_URL } from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -80,7 +81,7 @@ export default function Home() {
       const formData = new FormData();
       formData.append("file", selectedFile);
 
-    const response = await fetch("/analyze/qr", {
+    const response = await fetch(`${API_BASE_URL}/analyze/qr`, {
       method: "POST",
       body: formData,
     });
@@ -106,7 +107,7 @@ export default function Home() {
 
     // If QR contains a URL → forward to analyze endpoint for full analysis
     if (qrResult.type === "url" && qrResult.url_for_analysis) {
-      const analyzeResponse = await fetch("/analyze/", {
+      const analyzeResponse = await fetch(`${API_BASE_URL}/analyze/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: qrResult.url_for_analysis }),
@@ -170,7 +171,7 @@ export default function Home() {
     setScreenshot(null);
 
   try {
-    const response = await fetch("/analyze/", {
+    const response = await fetch(`${API_BASE_URL}/analyze/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),

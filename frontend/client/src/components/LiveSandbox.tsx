@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { getWsUrl } from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 import { Monitor, X, ArrowLeft, ArrowRight, RotateCw, Timer, Shield, Loader2 } from "lucide-react";
 
@@ -39,8 +40,7 @@ export function LiveSandbox({ url, onClose }: LiveSandboxProps) {
 
   // WebSocket connection
   useEffect(() => {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/sandbox/live?url=${encodeURIComponent(url)}`;
+    const wsUrl = getWsUrl(`/sandbox/live?url=${encodeURIComponent(url)}`);
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;

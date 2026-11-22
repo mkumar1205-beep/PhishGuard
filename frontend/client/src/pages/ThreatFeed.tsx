@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { API_BASE_URL } from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 import { Shield, AlertTriangle, Clock, RefreshCw, ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +24,7 @@ export default function ThreatFeed() {
   const fetchFeed = async (silent = false) => {
     if (!silent) setIsLoading(true);
     try {
-      const res = await fetch("/analyze/threat-feed");
+      const res = await fetch(`${API_BASE_URL}/analyze/threat-feed`);
       const data = await res.json();
       const incoming: ThreatEntry[] = data.feed ?? [];
 
